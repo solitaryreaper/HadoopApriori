@@ -12,6 +12,7 @@ import model.ItemSet;
 import model.Transaction;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.filecache.DistributedCache;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.IntWritable;
@@ -21,6 +22,8 @@ import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+import org.apache.hadoop.util.Tool;
+import org.apache.hadoop.util.ToolRunner;
 
 import utils.AprioriUtils;
 import utils.HashTreeUtils;
@@ -28,50 +31,87 @@ import utils.HashTreeUtils;
 /*
  * A parallel hadoop-based Apriori algorithm
  */
-public class MRApriori {
+public class MRApriori extends Configured implements Tool
+{
 	private static String jobPrefix = "MRApriori Algorithm Phase ";
-	private static String hdfsInputDir = "/user/hduser/mrapriori-T10I4D100K";
-	private static String hdfsOuptutDirPrefix = "/user/hduser/mrapriori-out-";
 
-	// TODO : Can I dynamically determine this?
-	private static int MAX_PASSES = 4; // T10_I4_D100K 
+	// TODO : This is bad as I using a global shared variable between functions which should
+	// ideally be a function parameter. Need to fix this later. These parameters are required in
+	// reducer logic and have to be dynamica. How can I pass some initialisation parameters to
+	// reducer ?
+	private static Double MIN_SUPPORT_PERCENT = 0.75;
+	private static Integer MAX_NUM_TXNS = 98395;
 	
-	public static void main(String[] args) throws IOException, InterruptedException, ClassNotFoundException {
-		Configuration phase1Conf = new Configuration();
-
-		// Set phase-1 MR job
-		System.out.println("Starting AprioriPhase1Job");
-		int passNum = 1;
-		Job aprioriPhase1Job = new Job(phase1Conf, jobPrefix + passNum);
-		configureAprioriJob(aprioriPhase1Job, AprioriPhase1Mapper.class);
-		FileInputFormat.addInputPath(aprioriPhase1Job, new Path(hdfsInputDir));
-		FileOutputFormat.setOutputPath(aprioriPhase1Job, new Path(hdfsOuptutDirPrefix + passNum));
-		boolean isDone = aprioriPhase1Job.waitForCompletion(true) ? true : false;
-		System.out.println("Finished AprioriPhase1Job");
-		
-		// Once phase-1 is done, process other phases
-		Configuration phaseKConf = null;
-		Job aprioriPhaseKJob = null;
-		for(int k=2; k <= MAX_PASSES; k++) {
-			++passNum;
-			System.out.println("Starting AprioriPhase" + passNum +"Job");
-			phaseKConf = new Configuration();
-			phaseKConf.setInt("passNum", passNum);
-			
-			// Add output of previous run to the distributed cache
-			
-			// TODO : change this to add all files from output directory 
-			DistributedCache.addCacheFile(URI.create("hdfs://localhost:54310/user/hduser/mrapriori-out-" + (passNum-1) + "/part-r-00000"), phaseKConf);
-			System.out.println("Added to distributed cache the output of pass " + (passNum-1));
-			
-			aprioriPhaseKJob = new Job(phaseKConf, jobPrefix + passNum);
-			configureAprioriJob(aprioriPhaseKJob, AprioriPhaseKMapper.class);
-			FileInputFormat.addInputPath(aprioriPhaseKJob, new Path(hdfsInputDir));
-			FileOutputFormat.setOutputPath(aprioriPhaseKJob, new Path(hdfsOuptutDirPrefix + passNum));
-			isDone = aprioriPhaseKJob.waitForCompletion(true) ? true : false;
-			
-			System.out.println("Finishing AprioriPhase" + passNum +"Job");
+	public int run(String[] args) throws IOException, InterruptedException, ClassNotFoundException {
+		if(args.length != 5) {
+			System.err.println("Incorrect number of command line args. Exiting !!");
+			return -1;
 		}
+		
+		String hdfsInputDir = args[0];
+		String hdfsOutputDirPrefix = args[1];
+		
+		int maxPasses = Integer.parseInt(args[2]);
+		MIN_SUPPORT_PERCENT = Double.parseDouble(args[3]);
+		MAX_NUM_TXNS = Integer.parseInt(args[4]);
+		
+		System.out.println("InputDir 		 : " + hdfsInputDir);
+		System.out.println("OutputDir Prefix : " + hdfsOutputDirPrefix);
+		System.out.println("Number of Passes : " + maxPasses);
+		System.out.println("MinSupPercent : " + MIN_SUPPORT_PERCENT);
+		System.out.println("Max Txns : " + MAX_NUM_TXNS);
+		for(int passNum=1; passNum <= maxPasses; passNum++) {
+			boolean isPassKMRJobDone = runPassKMRJob(hdfsInputDir, hdfsOutputDirPrefix, passNum);
+			if(!isPassKMRJobDone) {
+				System.err.println("Phase1 MapReduce job failed. Exiting !!");
+				return -1;
+			}
+		}
+		
+		return 1;
+	}
+
+	/*
+	 * Runs the pass K mapreduce job for apriori algorithm. 
+	 */
+	private static boolean runPassKMRJob(String hdfsInputDir, String hdfsOutputDirPrefix, int passNum) 
+				throws IOException, InterruptedException, ClassNotFoundException
+	{
+		boolean isMRJobSuccess = false;
+		
+		Configuration passKMRConf = new Configuration();
+		passKMRConf.setInt("passNum", passNum);
+		System.out.println("Starting AprioriPhase" + passNum +"Job");
+
+		// TODO : Should I scan all files in this output directory?
+		/*
+		 * The large itemsets of pass (K-1) are used to derive the candidate itemsets of pass K.
+		 * So, storing the large itemsets of pass (K-1) in distributed cache, so that it is 
+		 * accessible to pass K MR job.
+		 */
+		if(passNum > 1) {
+			DistributedCache.addCacheFile(
+					URI.create("hdfs://localhost:54310" + hdfsOutputDirPrefix + 
+					(passNum-1) + "/part-r-00000"), passKMRConf
+			);
+			System.out.println("Added to distributed cache the output of pass " + (passNum-1));
+		}
+
+		Job aprioriPassKMRJob = new Job(passKMRConf, jobPrefix + passNum);
+		if(passNum == 1) {
+			configureAprioriJob(aprioriPassKMRJob, AprioriPass1Mapper.class);
+		}
+		else {
+			configureAprioriJob(aprioriPassKMRJob, AprioriPassKMapper.class);
+		}
+
+		FileInputFormat.addInputPath(aprioriPassKMRJob, new Path(hdfsInputDir));
+		FileOutputFormat.setOutputPath(aprioriPassKMRJob, new Path(hdfsOutputDirPrefix + passNum));
+		
+		isMRJobSuccess = (aprioriPassKMRJob.waitForCompletion(true) ? true : false);
+		System.out.println("Finished AprioriPhase" + passNum +"Job");
+		
+		return isMRJobSuccess;
 	}
 
 	/*
@@ -92,7 +132,7 @@ public class MRApriori {
 	/*
 	 * Mapper for Phase1 would emit a <itemId, 1> pair for each item across all transactions.
 	 */
-	public static class AprioriPhase1Mapper extends Mapper<Object, Text, Text, IntWritable> {
+	public static class AprioriPass1Mapper extends Mapper<Object, Text, Text, IntWritable> {
 		private final static IntWritable one = new IntWritable(1);
 		private Text item = new Text();
 
@@ -123,18 +163,17 @@ public class MRApriori {
 			itemsetIds = itemsetIds.replace(" ", "");
 
 			// If the item has minSupport, then it is a large itemset.
-			if(AprioriUtils.hasMinSupport(countItemId)) {
+			if(AprioriUtils.hasMinSupport(MIN_SUPPORT_PERCENT, MAX_NUM_TXNS, countItemId)) {
 				context.write(new Text(itemsetIds), new IntWritable(countItemId));	
 			}
 		}
 	}
 	
-	
 	// Phase2 - MapReduce
 	/*
 	 * Mapper for PhaseK would emit a <itemId, 1> pair for each item across all transactions.
 	 */
-	public static class AprioriPhaseKMapper extends Mapper<Object, Text, Text, IntWritable> {
+	public static class AprioriPassKMapper extends Mapper<Object, Text, Text, IntWritable> {
 		private final static IntWritable one = new IntWritable(1);
 		private Text item = new Text();
 
@@ -192,4 +231,9 @@ public class MRApriori {
 		}
 	}
 
+	public static void main(String[] args) throws Exception
+	{
+		int exitCode = ToolRunner.run(new MRApriori(), args);
+		System.exit(exitCode);
+	}
 }

@@ -14,10 +14,6 @@ import model.Transaction;
  */
 public class AprioriUtils {
 
-	// TODO : Can this be passed as a parameter ?
-	private static double MINSUP_PERCENTAGE = 0.75;
-	private static int NUM_TXNS             = 98395; // T10_I4_D100K
-
 	/*
 	 * Returns a transaction object for the input txn record.
 	 */
@@ -42,10 +38,10 @@ public class AprioriUtils {
 	/*
 	 * Determines if an item with the specified frequency has minimum support or not.
 	 */
-	public static boolean hasMinSupport(int itemCount)
+	public static boolean hasMinSupport(double minSupPercent, int maxNumTxns, int itemCount)
 	{
 		boolean hasMinSupport = false;
-		int minSupport = (int)((double)(MINSUP_PERCENTAGE * NUM_TXNS))/100;
+		int minSupport = (int)((double)(minSupPercent * maxNumTxns))/100;
 		if(itemCount >= minSupport) {
 			hasMinSupport = true;
 		}
