@@ -1,11 +1,11 @@
 package apriori;
 
 import java.io.BufferedReader;
-import java.io.FileReader;
+import java.io.*;
 import java.io.IOException;
-import java.net.URI;
+import java.net.*;
 import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 
 import model.HashTreeNode;
 import model.ItemSet;
@@ -27,6 +27,7 @@ import org.apache.hadoop.util.ToolRunner;
 
 import utils.AprioriUtils;
 import utils.HashTreeUtils;
+import org.apache.hadoop.fs.*;
 
 /*
  * A parallel hadoop-based Apriori algorithm
@@ -39,8 +40,6 @@ public class MRApriori extends Configured implements Tool
 	// ideally be a function parameter. Need to fix this later. These parameters are required in
 	// reducer logic and have to be dynamica. How can I pass some initialisation parameters to
 	// reducer ?
-	private static Double MIN_SUPPORT_PERCENT = 0.75;
-	private static Integer MAX_NUM_TXNS = 98395;
 	
 	public int run(String[] args) throws IOException, InterruptedException, ClassNotFoundException {
 		if(args.length != 5) {
@@ -52,21 +51,27 @@ public class MRApriori extends Configured implements Tool
 		String hdfsOutputDirPrefix = args[1];
 		
 		int maxPasses = Integer.parseInt(args[2]);
-		MIN_SUPPORT_PERCENT = Double.parseDouble(args[3]);
-		MAX_NUM_TXNS = Integer.parseInt(args[4]);
+		Double MIN_SUPPORT_PERCENT = Double.parseDouble(args[3]);
+		Integer MAX_NUM_TXNS = Integer.parseInt(args[4]);
 		
 		System.out.println("InputDir 		 : " + hdfsInputDir);
 		System.out.println("OutputDir Prefix : " + hdfsOutputDirPrefix);
 		System.out.println("Number of Passes : " + maxPasses);
 		System.out.println("MinSupPercent : " + MIN_SUPPORT_PERCENT);
 		System.out.println("Max Txns : " + MAX_NUM_TXNS);
+		long startTime = System.currentTimeMillis();
+		long endTime = System.currentTimeMillis();
 		for(int passNum=1; passNum <= maxPasses; passNum++) {
-			boolean isPassKMRJobDone = runPassKMRJob(hdfsInputDir, hdfsOutputDirPrefix, passNum);
+			endTime = System.currentTimeMillis();
+			boolean isPassKMRJobDone = runPassKMRJob(hdfsInputDir, hdfsOutputDirPrefix, passNum, MIN_SUPPORT_PERCENT, MAX_NUM_TXNS);
 			if(!isPassKMRJobDone) {
 				System.err.println("Phase1 MapReduce job failed. Exiting !!");
 				return -1;
 			}
+			System.out.println("For pass " + passNum  + " = " + (System.currentTimeMillis() - endTime));
 		}
+		endTime = System.currentTimeMillis();
+		System.out.println("Total time taken = " + (endTime - startTime));
 		
 		return 1;
 	}
@@ -74,13 +79,15 @@ public class MRApriori extends Configured implements Tool
 	/*
 	 * Runs the pass K mapreduce job for apriori algorithm. 
 	 */
-	private static boolean runPassKMRJob(String hdfsInputDir, String hdfsOutputDirPrefix, int passNum) 
+	private static boolean runPassKMRJob(String hdfsInputDir, String hdfsOutputDirPrefix, int passNum, Double MIN_SUPPORT_PERCENT, Integer MAX_NUM_TXNS) 
 				throws IOException, InterruptedException, ClassNotFoundException
 	{
 		boolean isMRJobSuccess = false;
 		
 		Configuration passKMRConf = new Configuration();
 		passKMRConf.setInt("passNum", passNum);
+		passKMRConf.set("minSup", Double.toString(MIN_SUPPORT_PERCENT));
+		passKMRConf.setInt("numTxns", MAX_NUM_TXNS);
 		System.out.println("Starting AprioriPhase" + passNum +"Job");
 
 		// TODO : Should I scan all files in this output directory?
@@ -89,13 +96,15 @@ public class MRApriori extends Configured implements Tool
 		 * So, storing the large itemsets of pass (K-1) in distributed cache, so that it is 
 		 * accessible to pass K MR job.
 		 */
+		/*
 		if(passNum > 1) {
 			DistributedCache.addCacheFile(
-					URI.create("hdfs://localhost:54310" + hdfsOutputDirPrefix + 
+					URI.create("hdfs://127.0.0.1:54310" + hdfsOutputDirPrefix + 
 					(passNum-1) + "/part-r-00000"), passKMRConf
 			);
 			System.out.println("Added to distributed cache the output of pass " + (passNum-1));
 		}
+		*/
 
 		Job aprioriPassKMRJob = new Job(passKMRConf, jobPrefix + passNum);
 		if(passNum == 1) {
@@ -106,6 +115,7 @@ public class MRApriori extends Configured implements Tool
 		}
 
 		FileInputFormat.addInputPath(aprioriPassKMRJob, new Path(hdfsInputDir));
+		System.out.println("saurabh " + new Path(hdfsInputDir));
 		FileOutputFormat.setOutputPath(aprioriPassKMRJob, new Path(hdfsOutputDirPrefix + passNum));
 		
 		isMRJobSuccess = (aprioriPassKMRJob.waitForCompletion(true) ? true : false);
@@ -161,9 +171,11 @@ public class MRApriori extends Configured implements Tool
 			itemsetIds = itemsetIds.replace("[", "");
 			itemsetIds = itemsetIds.replace("]", "");
 			itemsetIds = itemsetIds.replace(" ", "");
-
+			Double minSup = Double.parseDouble(context.getConfiguration().get("minSup"));
+			Integer numTxns = context.getConfiguration().getInt("numTxns", 2);
+			//System.out.println("dsfsdfsdf: " + MIN_SUPPORT_PERCENT + " " + MAX_NUM_TXNS);
 			// If the item has minSupport, then it is a large itemset.
-			if(AprioriUtils.hasMinSupport(MIN_SUPPORT_PERCENT, MAX_NUM_TXNS, countItemId)) {
+			if(AprioriUtils.hasMinSupport(minSup, numTxns, countItemId)) {
 				context.write(new Text(itemsetIds), new IntWritable(countItemId));	
 			}
 		}
@@ -183,37 +195,43 @@ public class MRApriori extends Configured implements Tool
 		
 		@Override
 		public void setup(Context context) throws IOException {
-			Path[] uris = DistributedCache.getLocalCacheFiles(context.getConfiguration());
+			//Path[] uris = DistributedCache.getLocalCacheFiles(context.getConfiguration());
 
 			int passNum = context.getConfiguration().getInt("passNum", 2);
-			String opFileLastPass = "mrapriori-out-" + (passNum-1);
-			System.out.println("Distributed cache file to search " + opFileLastPass);
-			BufferedReader fis;
-			for (int i = 0; i < uris.length; i++) {
-				if (uris[i].toString().contains(opFileLastPass)) {
-					String currLine = null;
-					fis = new BufferedReader(new FileReader(uris[i].toString()));
-					while ((currLine = fis.readLine()) != null) {
-						currLine = currLine.trim();
-						String[] words = currLine.split("[\\s\\t]+");
-						if(words.length < 2) {
-							continue;
-						}
-						
-						List<Integer> items = new ArrayList<Integer>();
-						for(int k=0; k < words.length -1 ; k++){
-							String csvItemIds = words[k];
-							String[] itemIds = csvItemIds.split(",");
-							for(String itemId : itemIds) {
-								items.add(Integer.parseInt(itemId));
-							}
-						}
-						String finalWord = words[words.length-1];
-						int supportCount = Integer.parseInt(finalWord);
-						
-						largeItemsetsPrevPass.add(new ItemSet(items, supportCount));
+			String opFileLastPass = context.getConfiguration().get("fs.default.name") + "/user/hduser/mrapriori-out-" + (passNum-1) + "/part-r-00000";
+			//System.out.println("ahsdkjdsgfjhgf" + opFileLastPass);
+			//System.out.println("Distributed cache file to search " + opFileLastPass);
+			
+			try
+			{
+				Path pt=new Path(opFileLastPass);
+                        	FileSystem fs = FileSystem.get(context.getConfiguration());
+                        	BufferedReader fis=new BufferedReader(new InputStreamReader(fs.open(pt)));
+				String currLine = null;
+				//System.out.println("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");	
+				while ((currLine = fis.readLine()) != null) {
+					currLine = currLine.trim();
+					String[] words = currLine.split("[\\s\\t]+");
+					if(words.length < 2) {
+						continue;
 					}
+					
+					List<Integer> items = new ArrayList<Integer>();
+					for(int k=0; k < words.length -1 ; k++){
+						String csvItemIds = words[k];
+						String[] itemIds = csvItemIds.split(",");
+						for(String itemId : itemIds) {
+							items.add(Integer.parseInt(itemId));
+						}
+					}
+					String finalWord = words[words.length-1];
+					int supportCount = Integer.parseInt(finalWord);
+					//System.out.println(items + " --> " + supportCount);	
+					largeItemsetsPrevPass.add(new ItemSet(items, supportCount));
 				}
+			}
+			catch(Exception e)
+			{
 			}
 			
 			candidateItemsets = AprioriUtils.getCandidateItemsets(largeItemsetsPrevPass, (passNum-1));

@@ -1,0 +1,45 @@
+Cleaning up existing hadoop directories ..
+Deleted hdfs://master:54310/user/hduser/mrapriori-T10I4D100K
+Deleted hdfs://master:54310/user/hduser/mrapriori-out-1
+Deleted hdfs://master:54310/user/hduser/mrapriori-out-2
+Recreating input hadoop directory ..
+Compiling the java classes ..
+Creating the jar ..
+added manifest
+adding: apriori/(in = 0) (out= 0)(stored 0%)
+adding: apriori/MRApriori.class(in = 4253) (out= 2132)(deflated 49%)
+adding: apriori/MRApriori$AprioriPhase1Mapper.class(in = 2037) (out= 903)(deflated 55%)
+adding: apriori/MRApriori$AprioriPassKMapper.class(in = 4665) (out= 2129)(deflated 54%)
+adding: apriori/MRApriori$AprioriPhaseKMapper.class(in = 4695) (out= 2158)(deflated 54%)
+adding: apriori/MRApriori$AprioriPass1Mapper.class(in = 2035) (out= 910)(deflated 55%)
+adding: apriori/MRApriori$AprioriReducer.class(in = 2535) (out= 1119)(deflated 55%)
+adding: utils/(in = 0) (out= 0)(stored 0%)
+adding: utils/HashTreeUtils.class(in = 2691) (out= 1478)(deflated 45%)
+adding: utils/AprioriUtils.class(in = 3590) (out= 1894)(deflated 47%)
+adding: model/(in = 0) (out= 0)(stored 0%)
+adding: model/ItemSet.class(in = 2259) (out= 1142)(deflated 49%)
+adding: model/HashTreeNode.class(in = 1685) (out= 774)(deflated 54%)
+adding: model/Transaction.class(in = 1410) (out= 676)(deflated 52%)
+Launching the hadoop job ..
+InputDir 		 : /user/hduser/mrapriori-T10I4D100K
+OutputDir Prefix : /user/hduser/mrapriori-out-
+Number of Passes : 4
+MinSupPercent : 0.75
+Max Txns : 98395
+Starting AprioriPhase1Job
+saurabh /user/hduser/mrapriori-T10I4D100K
+Finished AprioriPhase1Job
+For pass 1 = 36361
+Starting AprioriPhase2Job
+saurabh /user/hduser/mrapriori-T10I4D100K
+Finished AprioriPhase2Job
+For pass 2 = 76196
+Starting AprioriPhase3Job
+saurabh /user/hduser/mrapriori-T10I4D100K
+Finished AprioriPhase3Job
+For pass 3 = 33582
+Starting AprioriPhase4Job
+saurabh /user/hduser/mrapriori-T10I4D100K
+Finished AprioriPhase4Job
+For pass 4 = 32416
+Total time taken = 178555
